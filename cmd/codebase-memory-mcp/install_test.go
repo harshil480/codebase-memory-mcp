@@ -662,3 +662,146 @@ func TestRemoveOldMonolithicSkill(t *testing.T) {
 		t.Fatal("old monolithic skill dir should be removed")
 	}
 }
+
+func TestKilloCodeConfigPath(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+
+	path := killocodeConfigPath()
+	if path == "" {
+		t.Fatal("killocodeConfigPath returned empty")
+	}
+	if !strings.HasSuffix(path, filepath.Join(".config", "Code", "User", "globalStorage", "kilocode.kilo-code", "settings", "mcp_settings.json")) {
+		t.Fatalf("unexpected path: %s", path)
+	}
+}
+
+func TestKilloCodeMCPInstall(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+
+	configPath := filepath.Join(
+		home,
+		".config",
+		"Code",
+		"User",
+		"globalStorage",
+		"kilocode.kilo-code",
+		"settings",
+		"mcp_settings.json",
+	)
+	binaryPath := "/usr/local/bin/codebase-memory-mcp"
+
+	installKilloCodeMCP(binaryPath, configPath, installConfig{})
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	servers, ok := root["mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("expected mcp key")
+	}
+	entry, ok := servers["codebase-memory-mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("codebase-memory-mcp not registered")
+	}
+	if entry["type"] != "local" {
+		t.Fatalf("expected type=local, got %v", entry["type"])
+	}
+	cmd := server["command"].(string)
+	if !ok || len(cmd) != 1 || cmd[0] != binaryPath {
+		t.Fatalf("expected command=[%s], got %v", binaryPath, entry["command"])
+	}
+}
+
+func TestKilloCodeMCPPreservesSettings(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+
+	configPath := filepath.Join(
+		home,
+		".config",
+		"Code",
+		"User",
+		"globalStorage",
+		"kilocode.kilo-code",
+		"settings",
+		"mcp_settings.json",
+	)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-existing Killo Code settings
+	existing := `{"provider": "anthropic", "model": "claude-sonnet-4-20250514"}`
+	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	installKilloCodeMCP("/usr/local/bin/codebase-memory-mcp", configPath, installConfig{})
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	// Original settings preserved
+	if root["provider"] != "anthropic" {
+		t.Fatal("provider setting was lost")
+	}
+	if root["model"] != "claude-sonnet-4-20250514" {
+		t.Fatal("model setting was lost")
+	}
+	// MCP server added
+	servers, ok := root["mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("mcp key missing")
+	}
+	if _, ok := servers["codebase-memory-mcp"]; !ok {
+		t.Fatal("codebase-memory-mcp not added")
+	}
+}
+
+func TestKilloCodeMCPUninstall(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+
+	configPath := filepath.Join(
+		home,
+		".config",
+		"Code",
+		"User",
+		"globalStorage",
+		"kilocode.kilo-code",
+		"settings",
+		"mcp_settings.json",
+	)
+	binaryPath := "/usr/local/bin/codebase-memory-mcp"
+
+	installKilloCodeMCP(binaryPath, configPath, installConfig{})
+	removeKilloCodeMCP(configPath, installConfig{})
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	servers, ok := root["mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("mcp key missing")
+	}
+	if _, exists := servers["codebase-memory-mcp"]; exists {
+		t.Fatal("codebase-memory-mcp should be removed")
+	}
+}
